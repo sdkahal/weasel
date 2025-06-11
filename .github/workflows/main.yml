@@ -136,4 +136,3 @@ jobs:
           files: |
             ${{ github.workspace }}/output/archives/weasel*.exe
             ${{ github.workspace }}/output/archives/debug_symbols.7z
-          body_path: ${{ github.workspace }}/RELEASE_CHANGELOG.md
