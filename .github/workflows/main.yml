@@ -1,0 +1,62 @@
+name: Build Weasel
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2019
+    outputs:
+      installer_path: ${{ steps.artifact.outputs.installer }}
+      symbols_path: ${{ steps.artifact.outputs.symbols }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        
+    - name: Setup Boost
+      run: |
+        # 自动下载并安装 Boost
+        $boostVersion = "1.84.0"
+        $boostUrl = "https://boostorg.jfrog.io/artifactory/main/release/$boostVersion/source/boost_${boostVersion//./_}.7z"
+        Invoke-WebRequest -Uri $boostUrl -OutFile "boost.7z"
+        7z x boost.7z -o"$env:GITHUB_WORKSPACE\deps"
+        echo "BOOST_ROOT=$env:GITHUB_WORKSPACE\deps\boost_$($boostVersion.replace('.','_'))" | Out-File -FilePath $env:GITHUB_ENV -Append
+        
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Get Rime Dependencies
+      run: .\get-rime.ps1 -use dev
+      
+    - name: Build Data
+      run: .\build.bat data
+      
+    - name: Build Installer (Release)
+      if: github.ref == 'refs/heads/master'
+      run: |
+        set RELEASE_BUILD=1
+        .\build.bat arm64 installer
+        
+    - name: Build Installer (Nightly)
+      if: startsWith(github.ref, 'refs/tags/')
+      run: .\build.bat arm64 installer
+      
+    - name: Package Debug Symbols
+      run: 7z a -t7z "debug_symbols.7z" "output\*.pdb"
+      
+    - name: Upload Artifacts
+      id: artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WeaselInstaller
+        path: |
+          output\archives\weasel*.exe
+          debug_symbols.7z
+        retention-days: 7
