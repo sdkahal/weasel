@@ -53,10 +53,6 @@ jobs:
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install Windows SDK 10.0.26100.0
-        run: |
-          choco install windows-sdk-10.0.26100.0
-
       # use upper stream released librime files if stable release
       - name: Get Rime files
         shell: pwsh
