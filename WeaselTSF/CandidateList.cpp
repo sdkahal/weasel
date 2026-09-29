@@ -209,8 +209,7 @@ void CCandidateList::UpdateUI(const Context& ctx, const Status& status) {
   /// if it is owned by active view window
   //_UpdateOwner();
   _ui->Update(ctx, status);
-  if (_pbShow == FALSE)
-    _UpdateUIElement();
+  _UpdateUIElement();
 
   if (status.composing)
     Show(_pbShow);
@@ -284,6 +283,9 @@ HRESULT CCandidateList::_UpdateUIElement() {
 }
 
 void CCandidateList::StartUI() {
+  if (_uiStarted)
+    return;
+
   com_ptr<ITfThreadMgr> pThreadMgr = _tsf->_GetThreadMgr();
   if (!pThreadMgr) {
     return;
@@ -303,7 +305,9 @@ void CCandidateList::StartUI() {
                               bool* const next, bool* const scroll_next) {
       _tsf->HandleUICallback(sel, hov, next, scroll_next);
     });
-  pUIElementMgr->BeginUIElement(this, &_pbShow, &uiid);
+  if (FAILED(pUIElementMgr->BeginUIElement(this, &_pbShow, &uiid)))
+    return;
+  _uiStarted = true;
   // pUIElementMgr->UpdateUIElement(uiid);
   if (_pbShow) {
     _ui->style() = _style;
@@ -312,6 +316,9 @@ void CCandidateList::StartUI() {
 }
 
 void CCandidateList::EndUI() {
+  if (!_uiStarted)
+    return;
+
   com_ptr<ITfThreadMgr> pThreadMgr = _tsf->_GetThreadMgr();
   if (pThreadMgr) {
     com_ptr<ITfUIElementMgr> emgr;
@@ -321,6 +328,7 @@ void CCandidateList::EndUI() {
     if (emgr != NULL)
       emgr->EndUIElement(uiid);
   }
+  _uiStarted = false;
   _DisposeUIWindow();
 }
 

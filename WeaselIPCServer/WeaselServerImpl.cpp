@@ -131,6 +131,19 @@ LRESULT ServerImpl::OnCommand(UINT uMsg,
   return 0;
 }
 
+LRESULT ServerImpl::OnServiceNotifyMessage(UINT uMsg,
+                                           WPARAM wParam,
+                                           LPARAM lParam,
+                                           BOOL& bHandled) {
+  // Runs on the server message thread, NOT on a pipe worker thread and
+  // without holding g_api_mutex, so that Shell_NotifyIcon inside the tray
+  // update can never deadlock against the taskbar UI thread.
+  if (m_trayRefreshCallback) {
+    m_trayRefreshCallback();
+  }
+  return 0;
+}
+
 DWORD ServerImpl::OnCommand(WEASEL_IPC_COMMAND uMsg,
                             DWORD wParam,
                             DWORD lParam) {
@@ -139,7 +152,7 @@ DWORD ServerImpl::OnCommand(WEASEL_IPC_COMMAND uMsg,
   return handled;
 }
 
-int ServerImpl::Start() {
+HWND ServerImpl::Start() {
   std::wstring instanceName = L"(WEASEL)Furandōru-Sukāretto-";
   instanceName += getUsername();
   HANDLE hMutexOneInstance = ::CreateMutex(NULL, FALSE, instanceName.c_str());
@@ -152,7 +165,7 @@ int ServerImpl::Start() {
 
   HWND hwnd = Create(NULL);
 
-  return (int)hwnd;
+  return hwnd;
 }
 
 int ServerImpl::Stop() {
@@ -446,7 +459,7 @@ Server::~Server() {
     delete m_pImpl;
 }
 
-int Server::Start() {
+HWND Server::Start() {
   return m_pImpl->Start();
 }
 
@@ -464,6 +477,10 @@ void Server::SetRequestHandler(RequestHandler* pHandler) {
 
 void Server::AddMenuHandler(UINT uID, CommandHandler handler) {
   m_pImpl->AddMenuHandler(uID, handler);
+}
+
+void Server::SetTrayRefreshCallback(std::function<void()> callback) {
+  m_pImpl->SetTrayRefreshCallback(callback);
 }
 
 HWND Server::GetHWnd() {

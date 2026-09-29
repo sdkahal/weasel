@@ -22,14 +22,6 @@ static const GUID c_guidProfile = {
     0x4781,
     {0xba, 0x20, 0x1c, 0x92, 0x67, 0x52, 0x94, 0x67}};
 
-// if in the future, option hant is extended, maybe a function to generate this
-// info is required
-#define PSZTITLE_HANS                                                     \
-  L"0804:{A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}{3D02CAB6-2B8E-4781-BA20-" \
-  L"1C9267529467}"
-#define PSZTITLE_HANT                                                     \
-  L"0404:{A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}{3D02CAB6-2B8E-4781-BA20-" \
-  L"1C9267529467}"
 #define ILOT_UNINSTALL 0x00000001
 typedef HRESULT(WINAPI* PTF_INSTALLLAYOUTORTIP)(LPCWSTR psz, DWORD dwFlags);
 
@@ -115,12 +107,40 @@ typedef int (*ime_register_func)(const std::wstring& ime_path,
                                  bool register_ime,
                                  bool is_wow64,
                                  bool is_wowarm,
-                                 bool hant,
+                                 const std::wstring& profile,
                                  bool silent);
+
+static LANGID profile_to_lang_id(const std::wstring& profile) {
+  if (profile == L"hant")
+    return MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL);
+  if (profile == L"hongkong")
+    return MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_HONGKONG);
+  if (profile == L"macau")
+    return MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_MACAU);
+  if (profile == L"singapore")
+    return MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SINGAPORE);
+  return MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED);
+}
+
+static std::wstring profile_to_title(const std::wstring& profile) {
+  WCHAR clsidTextService[64] = {0};
+  WCHAR profileGuid[64] = {0};
+  WCHAR langidText[5] = {0};
+
+  if (StringFromGUID2(c_clsidTextService, clsidTextService,
+                      _countof(clsidTextService)) <= 0 ||
+      StringFromGUID2(c_guidProfile, profileGuid, _countof(profileGuid)) <= 0 ||
+      FAILED(StringCchPrintfW(langidText, _countof(langidText), L"%04X",
+                              profile_to_lang_id(profile)))) {
+    return L"";
+  }
+
+  return std::wstring(langidText) + L":" + clsidTextService + profileGuid;
+}
 
 int install_ime_file(std::wstring& srcPath,
                      const std::wstring& ext,
-                     bool hant,
+                     const std::wstring& profile,
                      bool silent,
                      ime_register_func func) {
   WCHAR path[MAX_PATH];
@@ -145,7 +165,7 @@ int install_ime_file(std::wstring& srcPath,
                           MB_ICONERROR | MB_OK);
     return 1;
   }
-  retval += func(destPath, true, false, false, hant, silent);
+  retval += func(destPath, true, false, false, profile, silent);
   if (is_wow64()) {
     PVOID OldValue = NULL;
     // PW64DW64FR fnWow64DisableWow64FsRedirection =
@@ -174,7 +194,7 @@ int install_ime_file(std::wstring& srcPath,
                                 IDS_STR_INSTALL_FAILED, MB_ICONERROR | MB_OK);
           return 1;
         }
-        retval += func(destPathARM32, true, true, true, hant, silent);
+        retval += func(destPathARM32, true, true, true, profile, silent);
       }
 
       // Then install the ARM64 (and x64) version.
@@ -204,7 +224,7 @@ int install_ime_file(std::wstring& srcPath,
       }
 
       // Since weaselARM64X is just a redirector we don't have separate
-      // HANS and HANT variants.
+      // profile variants.
       srcPath = std::wstring(drive) + dir + L"weaselARM64X" + ext;
     } else {
       ireplace_last(srcPath, ext, L"x64" + ext);
@@ -215,7 +235,7 @@ int install_ime_file(std::wstring& srcPath,
                             MB_ICONERROR | MB_OK);
       return 1;
     }
-    retval += func(destPath, true, true, false, hant, silent);
+    retval += func(destPath, true, true, false, profile, silent);
     if (Wow64RevertWow64FsRedirection(OldValue) == FALSE) {
       MSG_NOT_SILENT_BY_IDS(silent, IDS_STR_ERRRECOVERFSREDIRECT,
                             IDS_STR_INSTALL_FAILED, MB_ICONERROR | MB_OK);
@@ -226,6 +246,7 @@ int install_ime_file(std::wstring& srcPath,
 }
 
 int uninstall_ime_file(const std::wstring& ext,
+                       const std::wstring& profile,
                        bool silent,
                        ime_register_func func) {
   int retval = 0;
@@ -233,10 +254,10 @@ int uninstall_ime_file(const std::wstring& ext,
   GetSystemDirectoryW(path, _countof(path));
   std::wstring imePath(path);
   imePath += L"\\weasel" + ext;
-  retval += func(imePath, false, false, false, false, silent);
+  retval += func(imePath, false, false, false, profile, silent);
   delete_file(imePath);
   if (is_wow64()) {
-    retval += func(imePath, false, true, false, false, silent);
+    retval += func(imePath, false, true, false, profile, silent);
     PVOID OldValue = NULL;
     if (Wow64DisableWow64FsRedirection(&OldValue) == FALSE) {
       MSG_NOT_SILENT_BY_IDS(silent, IDS_STR_ERRCANCELFSREDIRECT,
@@ -248,7 +269,7 @@ int uninstall_ime_file(const std::wstring& ext,
       WCHAR sysarm32[MAX_PATH];
       if (get_wow_arm32_system_dir(sysarm32, _countof(sysarm32)) > 0) {
         std::wstring imePathARM32 = std::wstring(sysarm32) + L"\\weasel" + ext;
-        retval += func(imePathARM32, false, true, true, false, silent);
+        retval += func(imePathARM32, false, true, true, profile, silent);
         delete_file(imePathARM32);
       }
 
@@ -272,185 +293,9 @@ int uninstall_ime_file(const std::wstring& ext,
 }
 
 // 注册IME输入法
-int register_ime(const std::wstring& ime_path,
-                 bool register_ime,
-                 bool is_wow64,
-                 bool is_wowarm,
-                 bool hant,
-                 bool silent) {
-  if (is_wow64) {
-    return 0;  // only once
-  }
+// `register_ime` (IMM/.ime) support removed — TSF-only build
 
-  const WCHAR KEYBOARD_LAYOUTS_KEY[] =
-      L"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts";
-  const WCHAR PRELOAD_KEY[] = L"Keyboard Layout\\Preload";
-
-  if (register_ime) {
-    HKL hKL = ImmInstallIME(ime_path.c_str(), get_weasel_ime_name().c_str());
-    if (!hKL) {
-      // manually register ime
-      WCHAR hkl_str[16] = {0};
-      HKEY hKey;
-      LSTATUS ret = RegOpenKey(HKEY_LOCAL_MACHINE, KEYBOARD_LAYOUTS_KEY, &hKey);
-      if (ret == ERROR_SUCCESS) {
-        for (DWORD k = 0xE0200000 + (hant ? 0x0404 : 0x0804); k <= 0xE0FF0804;
-             k += 0x10000) {
-          StringCchPrintfW(hkl_str, _countof(hkl_str), L"%08X", k);
-          HKEY hSubKey;
-          ret = RegOpenKey(hKey, hkl_str, &hSubKey);
-          if (ret == ERROR_SUCCESS) {
-            WCHAR imeFile[32] = {0};
-            DWORD len = sizeof(imeFile);
-            DWORD type = 0;
-            ret = RegQueryValueEx(hSubKey, L"Ime File", NULL, &type,
-                                  (LPBYTE)imeFile, &len);
-            if (ret = ERROR_SUCCESS) {
-              if (_wcsicmp(imeFile, L"weasel.ime") == 0) {
-                hKL = (HKL)k;  // already there
-              }
-            }
-            RegCloseKey(hSubKey);
-          } else {
-            // found a spare number to register
-            ret = RegCreateKey(hKey, hkl_str, &hSubKey);
-            if (ret == ERROR_SUCCESS) {
-              const WCHAR ime_file[] = L"weasel.ime";
-              RegSetValueEx(hSubKey, L"Ime File", 0, REG_SZ, (LPBYTE)ime_file,
-                            sizeof(ime_file));
-              const WCHAR layout_file[] = L"kbdus.dll";
-              RegSetValueEx(hSubKey, L"Layout File", 0, REG_SZ,
-                            (LPBYTE)layout_file, sizeof(layout_file));
-              const std::wstring layout_text = get_weasel_ime_name();
-              RegSetValueEx(hSubKey, L"Layout Text", 0, REG_SZ,
-                            (LPBYTE)layout_text.c_str(),
-                            layout_text.size() * sizeof(wchar_t));
-              RegCloseKey(hSubKey);
-              hKL = (HKL)k;
-            }
-            break;
-          }
-        }
-        RegCloseKey(hKey);
-      }
-      if (hKL) {
-        HKEY hPreloadKey;
-        ret = RegOpenKey(HKEY_CURRENT_USER, PRELOAD_KEY, &hPreloadKey);
-        if (ret == ERROR_SUCCESS) {
-          for (size_t i = 1; true; ++i) {
-            std::wstring number = std::to_wstring(i);
-            DWORD type = 0;
-            WCHAR value[32];
-            DWORD len = sizeof(value);
-            ret = RegQueryValueEx(hPreloadKey, number.c_str(), 0, &type,
-                                  (LPBYTE)value, &len);
-            if (ret != ERROR_SUCCESS) {
-              RegSetValueEx(hPreloadKey, number.c_str(), 0, REG_SZ,
-                            (const BYTE*)hkl_str,
-                            (wcslen(hkl_str) + 1) * sizeof(WCHAR));
-              break;
-            }
-          }
-          RegCloseKey(hPreloadKey);
-        }
-      }
-    }
-    if (!hKL) {
-      DWORD dwErr = GetLastError();
-      WCHAR msg[100];
-      CString str;
-      str.LoadStringW(IDS_STR_ERRREGIME);
-      StringCchPrintfW(msg, _countof(msg), str, hKL, dwErr);
-      MSG_NOT_SILENT_ID_CAP(silent, msg, IDS_STR_INSTALL_FAILED,
-                            MB_ICONERROR | MB_OK);
-      return 1;
-    }
-    return 0;
-  }
-
-  // unregister ime
-
-  HKEY hKey;
-  LSTATUS ret = RegOpenKey(HKEY_LOCAL_MACHINE, KEYBOARD_LAYOUTS_KEY, &hKey);
-  if (ret != ERROR_SUCCESS) {
-    MSG_NOT_SILENT_ID_CAP(silent, KEYBOARD_LAYOUTS_KEY,
-                          IDS_STR_UNINSTALL_FAILED, MB_ICONERROR | MB_OK);
-    return 1;
-  }
-
-  for (int i = 0; true; ++i) {
-    WCHAR subKey[16];
-    ret = RegEnumKey(hKey, i, subKey, _countof(subKey));
-    if (ret != ERROR_SUCCESS)
-      break;
-
-    // 中文键盘布局?
-    if (wcscmp(subKey + 4, L"0804") == 0 || wcscmp(subKey + 4, L"0404") == 0) {
-      HKEY hSubKey;
-      ret = RegOpenKey(hKey, subKey, &hSubKey);
-      if (ret != ERROR_SUCCESS)
-        continue;
-
-      WCHAR imeFile[32];
-      DWORD len = sizeof(imeFile);
-      DWORD type = 0;
-      ret = RegQueryValueEx(hSubKey, L"Ime File", NULL, &type, (LPBYTE)imeFile,
-                            &len);
-      RegCloseKey(hSubKey);
-      if (ret != ERROR_SUCCESS)
-        continue;
-
-      // 小狼毫?
-      if (_wcsicmp(imeFile, L"weasel.ime") == 0) {
-        DWORD value;
-        swscanf_s(subKey, L"%x", &value);
-        UnloadKeyboardLayout((HKL)value);
-
-        RegDeleteKey(hKey, subKey);
-
-        // 移除preload
-        HKEY hPreloadKey;
-        ret = RegOpenKey(HKEY_CURRENT_USER, PRELOAD_KEY, &hPreloadKey);
-        if (ret != ERROR_SUCCESS)
-          continue;
-        std::vector<std::wstring> preloads;
-        std::wstring number;
-        for (size_t i = 1; true; ++i) {
-          number = std::to_wstring(i);
-          DWORD type = 0;
-          WCHAR value[32];
-          DWORD len = sizeof(value);
-          ret = RegQueryValueEx(hPreloadKey, number.c_str(), 0, &type,
-                                (LPBYTE)value, &len);
-          if (ret != ERROR_SUCCESS) {
-            if (i > preloads.size()) {
-              // 删除最大一号注册表值
-              number = std::to_wstring(i - 1);
-              RegDeleteValue(hPreloadKey, number.c_str());
-            }
-            break;
-          }
-          if (_wcsicmp(subKey, value) != 0) {
-            preloads.push_back(value);
-          }
-        }
-        // 重写preloads
-        for (size_t i = 0; i < preloads.size(); ++i) {
-          number = std::to_wstring(i + 1);
-          RegSetValueEx(hPreloadKey, number.c_str(), 0, REG_SZ,
-                        (const BYTE*)preloads[i].c_str(),
-                        (preloads[i].length() + 1) * sizeof(WCHAR));
-        }
-        RegCloseKey(hPreloadKey);
-      }
-    }
-  }
-
-  RegCloseKey(hKey);
-  return 0;
-}
-
-void enable_profile(BOOL fEnable, bool hant) {
+void enable_profile(BOOL fEnable, const std::wstring& profile) {
   HRESULT hr;
   ITfInputProcessorProfiles* pProfiles = NULL;
 
@@ -459,7 +304,7 @@ void enable_profile(BOOL fEnable, bool hant) {
                         (LPVOID*)&pProfiles);
 
   if (SUCCEEDED(hr)) {
-    LANGID lang_id = hant ? 0x0404 : 0x0804;
+    LANGID lang_id = profile_to_lang_id(profile);
     if (fEnable) {
       pProfiles->EnableLanguageProfile(c_clsidTextService, lang_id,
                                        c_guidProfile, fEnable);
@@ -479,12 +324,12 @@ int register_text_service(const std::wstring& tsf_path,
                           bool register_ime,
                           bool is_wow64,
                           bool is_wowarm32,
-                          bool hant,
+                          const std::wstring& profile,
                           bool silent) {
   using RegisterServerFunction = HRESULT(STDAPICALLTYPE*)();
 
   if (!register_ime)
-    enable_profile(FALSE, hant);
+    enable_profile(FALSE, profile);
 
   std::wstring params = L" \"" + tsf_path + L"\"";
   if (!register_ime) {
@@ -493,14 +338,8 @@ int register_text_service(const std::wstring& tsf_path,
   // if (silent)  // always silent
   { params = L" /s " + params; }
 
-  if (hant) {
-    if (!SetEnvironmentVariable(L"TEXTSERVICE_PROFILE", L"hant")) {
-      // bad luck
-    }
-  } else {
-    if (!SetEnvironmentVariable(L"TEXTSERVICE_PROFILE", L"hans")) {
-      // bad luck
-    }
+  if (!SetEnvironmentVariable(L"TEXTSERVICE_PROFILE", profile.c_str())) {
+    throw std::runtime_error("SetEnvironmentVariable failed");
   }
 
   std::wstring app = L"regsvr32.exe";
@@ -529,28 +368,22 @@ int register_text_service(const std::wstring& tsf_path,
     CString str;
     str.LoadStringW(IDS_STR_ERRREGTSF);
     StringCchPrintfW(msg, _countof(msg), str, params.c_str());
-    // StringCchPrintfW(msg, _countof(msg), L"註冊輸入法錯誤 regsvr32.exe %s",
-    // params.c_str()); if (!silent) MessageBoxW(NULL, msg, L"安装/卸載失败",
-    // MB_ICONERROR | MB_OK);
     MSG_NOT_SILENT_ID_CAP(silent, msg, IDS_STR_INORUN_FAILED,
                           MB_ICONERROR | MB_OK);
     return 1;
   }
 
   if (register_ime)
-    enable_profile(TRUE, hant);
+    enable_profile(TRUE, profile);
 
   return 0;
 }
 
-int install(bool hant, bool silent, bool old_ime_support) {
+int install(const std::wstring& profile, bool silent) {
   std::wstring ime_src_path;
   int retval = 0;
-  if (old_ime_support) {
-    retval +=
-        install_ime_file(ime_src_path, L".ime", hant, silent, &register_ime);
-  }
-  retval += install_ime_file(ime_src_path, L".dll", hant, silent,
+
+  retval += install_ime_file(ime_src_path, L".dll", profile, silent,
                              &register_text_service);
 
   // 写注册表
@@ -577,6 +410,23 @@ int install(bool hant, bool silent, bool old_ime_support) {
     return 1;
   }
 
+  // persist the installing profile so that uninstall removes the right one
+  const WCHAR PROFILE_KEY[] = L"Software\\Rime\\Weasel";
+  ret = SetRegKeyValue(HKEY_CURRENT_USER, PROFILE_KEY, L"Profile",
+                       profile.c_str(), REG_SZ);
+  if (FAILED(HRESULT_FROM_WIN32(ret))) {
+    MSG_NOT_SILENT_BY_IDS(silent, IDS_STR_ERR_WRITE_PROFILE,
+                          IDS_STR_INSTALL_FAILED, MB_ICONERROR | MB_OK);
+    return 1;
+  }
+  ret = SetRegKeyValue(HKEY_CURRENT_USER, PROFILE_KEY, L"Hant",
+                       (profile == L"hant" ? 1 : 0), REG_DWORD);
+  if (FAILED(HRESULT_FROM_WIN32(ret))) {
+    MSG_NOT_SILENT_BY_IDS(silent, IDS_STR_ERR_WRITE_HANT,
+                          IDS_STR_INSTALL_FAILED, MB_ICONERROR | MB_OK);
+    return 1;
+  }
+
   // InstallLayoutOrTip
   // https://learn.microsoft.com/zh-cn/windows/win32/tsf/installlayoutortip
   // example in ref page not right with "*PTF_ INSTALLLAYOUTORTIP"
@@ -587,10 +437,9 @@ int install(bool hant, bool silent, bool old_ime_support) {
     pfnInstallLayoutOrTip =
         (PTF_INSTALLLAYOUTORTIP)GetProcAddress(hInputDLL, "InstallLayoutOrTip");
     if (pfnInstallLayoutOrTip) {
-      if (hant)
-        (*pfnInstallLayoutOrTip)(PSZTITLE_HANT, 0);
-      else
-        (*pfnInstallLayoutOrTip)(PSZTITLE_HANS, 0);
+      std::wstring title = profile_to_title(profile);
+      if (!title.empty())
+        (*pfnInstallLayoutOrTip)(title.c_str(), 0);
     }
     FreeLibrary(hInputDLL);
   }
@@ -625,32 +474,42 @@ int uninstall(bool silent) {
 
   const WCHAR KEY[] = L"Software\\Rime\\Weasel";
   HKEY hKey;
+  std::wstring profile = L"hans";
   LSTATUS ret = RegOpenKey(HKEY_CURRENT_USER, KEY, &hKey);
   if (ret == ERROR_SUCCESS) {
     DWORD type = 0;
     DWORD data = 0;
-    DWORD len = sizeof(data);
-    ret = RegQueryValueEx(hKey, L"Hant", NULL, &type, (LPBYTE)&data, &len);
-    if (ret == ERROR_SUCCESS && type == REG_DWORD) {
-      HMODULE hInputDLL = LoadLibrary(TEXT("input.dll"));
-      if (hInputDLL) {
-        PTF_INSTALLLAYOUTORTIP pfnInstallLayoutOrTip;
-        pfnInstallLayoutOrTip = (PTF_INSTALLLAYOUTORTIP)GetProcAddress(
-            hInputDLL, "InstallLayoutOrTip");
-        if (pfnInstallLayoutOrTip) {
-          if (data != 0)
-            (*pfnInstallLayoutOrTip)(PSZTITLE_HANT, ILOT_UNINSTALL);
-          else
-            (*pfnInstallLayoutOrTip)(PSZTITLE_HANS, ILOT_UNINSTALL);
-        }
-        FreeLibrary(hInputDLL);
+    WCHAR value[MAX_PATH] = {0};
+    DWORD len = sizeof(value);
+    ret = RegQueryValueEx(hKey, L"Profile", NULL, &type, (LPBYTE)value, &len);
+    if (ret == ERROR_SUCCESS && type == REG_SZ && value[0] != L'\0') {
+      profile = value;
+    } else {
+      len = sizeof(data);
+      ret = RegQueryValueEx(hKey, L"Hant", NULL, &type, (LPBYTE)&data, &len);
+      if (ret == ERROR_SUCCESS && type == REG_DWORD) {
+        profile = (data != 0) ? L"hant" : L"hans";
       }
+    }
+
+    HMODULE hInputDLL = LoadLibrary(TEXT("input.dll"));
+    if (hInputDLL) {
+      PTF_INSTALLLAYOUTORTIP pfnInstallLayoutOrTip;
+      pfnInstallLayoutOrTip = (PTF_INSTALLLAYOUTORTIP)GetProcAddress(
+          hInputDLL, "InstallLayoutOrTip");
+      if (pfnInstallLayoutOrTip) {
+        std::wstring title = profile_to_title(profile);
+        if (!title.empty())
+          (*pfnInstallLayoutOrTip)(title.c_str(), ILOT_UNINSTALL);
+      }
+      FreeLibrary(hInputDLL);
     }
     RegCloseKey(hKey);
   }
 
-  uninstall_ime_file(L".ime", silent, &register_ime);
-  retval += uninstall_ime_file(L".dll", silent, &register_text_service);
+  // IMM/.ime support removed; only uninstall TSF/.dll
+  retval +=
+      uninstall_ime_file(L".dll", profile, silent, &register_text_service);
 
   // 清除注册信息
   RegDeleteKey(HKEY_LOCAL_MACHINE, WEASEL_REG_KEY);
